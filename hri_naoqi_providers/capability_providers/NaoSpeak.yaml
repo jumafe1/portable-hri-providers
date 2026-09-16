@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: NaoSpeak
+spec_version: 1.1
+spec_type: provider
+description: "Speak through the non-animated synchronous ROS 2 service on NAO."
+implements: hri_capability_interfaces/Speak
+runner: hri_naoqi_providers::NaoSpeakRunner

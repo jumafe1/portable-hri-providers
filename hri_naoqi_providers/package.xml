@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hri_naoqi_providers</name>
+  <version>0.1.0</version>
+  <description>Capabilities2 providers that adapt portable HRI interfaces to NAOqi ROS 2 services.</description>
+  <maintainer email="jm.ferreira@uniandes.edu.co">Julian Ferreira</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>capabilities2_runner</depend>
+  <depend>hri_capability_interfaces</depend>
+  <depend>naoqi_utilities_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>tinyxml2</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <capability_provider>capability_providers/NaoSpeak.yaml</capability_provider>
+  </export>
+</package>

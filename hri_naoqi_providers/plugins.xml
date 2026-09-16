@@ -1,0 +1,10 @@
+<library path="nao_speak_runner">
+  <class
+    name="hri_naoqi_providers::NaoSpeakRunner"
+    type="hri_naoqi_providers::NaoSpeakRunner"
+    base_class_type="capabilities2_runner::RunnerBase">
+    <description>
+      Exposes the portable Speak service and delegates speech to NAO's /nao/say service.
+    </description>
+  </class>
+</library>
