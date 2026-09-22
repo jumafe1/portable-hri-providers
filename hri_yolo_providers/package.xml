@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hri_yolo_providers</name>
+  <version>0.1.0</version>
+  <description>Capabilities2 providers that adapt YOLO ROS detections to portable HRI interfaces.</description>
+  <maintainer email="jm.ferreira@uniandes.edu.co">Julian Ferreira</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>capabilities2_runner</depend>
+  <depend>hri_capability_interfaces</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>tinyxml2</depend>
+  <depend>yolo_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <capability_provider>capability_providers/YoloDetectPeople.yaml</capability_provider>
+  </export>
+</package>

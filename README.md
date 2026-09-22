@@ -4,7 +4,7 @@ Implementaciones de las capacidades comunes definidas en
 `portable-hri-interfaces`. Los paquetes de este repositorio adaptan servicios
 específicos de robots o backends sin introducir esos detalles en la aplicación.
 
-## Estado inicial
+## Proveedores
 
 `hri_naoqi_providers` contiene el proveedor `NaoSpeak`, administrado por
 Capabilities2. Expone `/hri/speak` y delega de forma no animada y síncrona al
@@ -12,6 +12,15 @@ servicio SinfonIA `/nao/say`.
 
 Consulta [hri_naoqi_providers/README.md](hri_naoqi_providers/README.md) para
 dependencias, compilación y limitaciones.
+
+`hri_yolo_providers` contiene `YoloDetectPeople`. El proveedor consume
+`/yolo/detections`, conserva únicamente el último frame reciente, filtra la
+clase `person` y expone el resultado portable en `/hri/detect_people`.
+`yolo_ros` continúa siendo el motor externo de inferencia y debe ejecutarse por
+separado.
+
+Consulta [hri_yolo_providers/README.md](hri_yolo_providers/README.md) para la
+semántica de los resultados y sus dependencias.
 
 ## Licencia
 

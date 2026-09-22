@@ -1,0 +1,10 @@
+<library path="yolo_detect_people_runner">
+  <class
+    name="hri_yolo_providers::YoloDetectPeopleRunner"
+    type="hri_yolo_providers::YoloDetectPeopleRunner"
+    base_class_type="capabilities2_runner::RunnerBase">
+    <description>
+      Exposes portable person detections from the latest fresh YOLO detection frame.
+    </description>
+  </class>
+</library>

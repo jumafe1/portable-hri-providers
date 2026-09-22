@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: YoloDetectPeople
+spec_version: 1.1
+spec_type: provider
+description: "Filter fresh person detections from the YOLO ROS detection stream."
+implements: hri_capability_interfaces/DetectPeople
+runner: hri_yolo_providers::YoloDetectPeopleRunner
