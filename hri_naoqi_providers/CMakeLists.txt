@@ -8,7 +8,6 @@ find_package(naoqi_utilities_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_srvs REQUIRED)
 find_package(tinyxml2 REQUIRED)
 
 add_library(
@@ -26,7 +25,6 @@ ament_target_dependencies(
   nav_msgs
   pluginlib
   rclcpp
-  std_srvs
 )
 target_link_libraries(nao_speak_runner tinyxml2::tinyxml2)
 

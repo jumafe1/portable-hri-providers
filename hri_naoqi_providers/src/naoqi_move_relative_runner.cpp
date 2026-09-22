@@ -4,7 +4,6 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <std_srvs/srv/set_bool.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -23,12 +22,10 @@ namespace
 using PortableMove = hri_capability_interfaces::srv::MoveRelative;
 using NaoqiMove = naoqi_utilities_msgs::srv::MoveTo;
 using Odometry = nav_msgs::msg::Odometry;
-using SetBool = std_srvs::srv::SetBool;
 
 constexpr char kPortableMoveType[] = "hri_capability_interfaces/srv/MoveRelative";
 constexpr char kDefaultPortableService[] = "/hri/move_relative";
 constexpr char kNaoqiMoveService[] = "/nao/move_to";
-constexpr char kAutonomousStateService[] = "/nao/set_autonomous_state";
 constexpr char kOdometryTopic[] = "/nao/odom";
 constexpr double kMaximumXMetres = 0.5;
 constexpr double kMaximumYMetres = 0.3;
@@ -73,7 +70,6 @@ struct ProviderState
   Pose2D latest_pose;
   std::chrono::steady_clock::time_point odometry_received_at;
   rclcpp::Client<NaoqiMove>::SharedPtr move_backend;
-  rclcpp::Client<SetBool>::SharedPtr autonomous_state_backend;
 };
 
 double normalize_angle(const double angle)
@@ -242,8 +238,6 @@ public:
     auto state = std::make_shared<ProviderState>();
     state->provider = config.provider;
     state->move_backend = node->create_client<NaoqiMove>(kNaoqiMoveService);
-    state->autonomous_state_backend =
-      node->create_client<SetBool>(kAutonomousStateService);
 
     auto odometry_callback = [state](const Odometry::SharedPtr message) {
         std::lock_guard<std::mutex> lock(state->mutex);
@@ -304,12 +298,6 @@ public:
             send_response(service, request_header, false, provider, "provider_busy");
             return;
           }
-          if (!state->autonomous_state_backend->service_is_ready()) {
-            send_response(
-              service, request_header, false, provider,
-              "autonomous_state_service_unavailable");
-            return;
-          }
           if (!state->move_backend->service_is_ready()) {
             send_response(
               service, request_header, false, provider,
@@ -343,84 +331,43 @@ public:
             });
         }
 
-        auto autonomous_request = std::make_shared<SetBool::Request>();
-        autonomous_request->data = false;
+        auto move_request = std::make_shared<NaoqiMove::Request>();
+        move_request->x_coordinate = static_cast<float>(request->x_m);
+        move_request->y_coordinate = static_cast<float>(request->y_m);
+        move_request->theta_coordinate = static_cast<float>(request->theta_rad);
         try {
-          state->autonomous_state_backend->async_send_request(
-            autonomous_request,
-            [state, node, request_id](rclcpp::Client<SetBool>::SharedFuture future) {
+          state->move_backend->async_send_request(
+            move_request,
+            [state, node, request_id](rclcpp::Client<NaoqiMove>::SharedFuture future) {
               try {
-                const auto autonomous_response = future.get();
-                if (!autonomous_response->success) {
-                  finish_request(
-                    state, request_id, false,
-                    "autonomous_state_disable_failed: " +
-                    autonomous_response->message);
-                  return;
-                }
-              } catch (const std::exception & error) {
-                finish_request(
-                  state, request_id, false,
-                  std::string("autonomous_state_request_failed: ") + error.what());
-                return;
-              }
-
-              double target_x{0.0};
-              double target_y{0.0};
-              double target_theta{0.0};
-              {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                if (!state->pending || state->pending->id != request_id) {
-                  return;
-                }
-                target_x = state->pending->target_x;
-                target_y = state->pending->target_y;
-                target_theta = state->pending->target_theta;
-              }
-
-              auto move_request = std::make_shared<NaoqiMove::Request>();
-              move_request->x_coordinate = static_cast<float>(target_x);
-              move_request->y_coordinate = static_cast<float>(target_y);
-              move_request->theta_coordinate = static_cast<float>(target_theta);
-              try {
-                state->move_backend->async_send_request(
-                  move_request,
-                  [state, node, request_id](rclcpp::Client<NaoqiMove>::SharedFuture future) {
-                    try {
-                      static_cast<void>(future.get());
-                    } catch (const std::exception & error) {
-                      finish_request(
-                        state, request_id, false,
-                        std::string("move_to_request_failed: ") + error.what(),
-                        Pose2D{}, true);
-                      return;
-                    }
-
-                    std::lock_guard<std::mutex> lock(state->mutex);
-                    if (!state->pending || state->pending->id != request_id) {
-                      return;
-                    }
-                    std::weak_ptr<ProviderState> weak_state{state};
-                    state->pending->settle_timer = node->create_wall_timer(
-                      kOdometrySettleDelay,
-                      [weak_state, request_id]() {
-                        const auto locked_state = weak_state.lock();
-                        if (locked_state) {
-                          verify_motion(locked_state, request_id);
-                        }
-                      });
-                  });
+                static_cast<void>(future.get());
               } catch (const std::exception & error) {
                 finish_request(
                   state, request_id, false,
                   std::string("move_to_request_failed: ") + error.what(),
                   Pose2D{}, true);
+                return;
               }
+
+              std::lock_guard<std::mutex> lock(state->mutex);
+              if (!state->pending || state->pending->id != request_id) {
+                return;
+              }
+              std::weak_ptr<ProviderState> weak_state{state};
+              state->pending->settle_timer = node->create_wall_timer(
+                kOdometrySettleDelay,
+                [weak_state, request_id]() {
+                  const auto locked_state = weak_state.lock();
+                  if (locked_state) {
+                    verify_motion(locked_state, request_id);
+                  }
+                });
             });
         } catch (const std::exception & error) {
           finish_request(
             state, request_id, false,
-            std::string("autonomous_state_request_failed: ") + error.what());
+            std::string("move_to_request_failed: ") + error.what(),
+            Pose2D{}, true);
         }
       };
 

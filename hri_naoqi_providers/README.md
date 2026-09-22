@@ -22,11 +22,10 @@ Stopping the runner is idempotent and safe if the backend callback arrives late.
 
 `hri_naoqi_providers::NaoqiMoveRelativeRunner` exposes
 `/hri/move_relative` and delegates bounded ground-plane motion to
-`/nao/move_to`. The three internal NAO names can be remapped to equivalent
+`/nao/move_to`. The two internal NAO names can be remapped to equivalent
 Pepper interfaces without changing the portable service:
 
 - `/nao/move_to` for the blocking NAOqi motion request;
-- `/nao/set_autonomous_state` to force autonomous life off first;
 - `/nao/odom` to verify the achieved displacement.
 
 The provider accepts one request at a time and initially limits targets to
@@ -35,6 +34,9 @@ out-of-range requests before calling the robot. A recent odometry sample is
 required before motion. After the backend returns, the provider transforms the
 odom delta into the robot's initial frame and checks a `0.05 m` position and
 `0.15 rad` angular tolerance.
+
+The provider neither reads nor changes autonomous life. That operational state
+remains under the control of the robot launch procedure or the operator.
 
 The underlying `MoveTo` response is empty, so a response from that service is
 not considered proof of success. If the 30-second deadline expires, the
@@ -49,7 +51,7 @@ not cancel motion: the current SinfonIA navigation package does not expose
 - Capabilities2 (`capabilities2_runner`)
 - `hri_capability_interfaces`
 - SinfonIA's `naoqi_utilities_msgs`
-- `nav_msgs` and `std_srvs`
+- `nav_msgs`
 
 The NAOqi bridge must already expose the required robot services and odometry.
 This package does not start or configure the robot driver.
