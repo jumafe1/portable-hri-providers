@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: NaoqiMoveRelative
+spec_version: 1.1
+spec_type: provider
+description: "Execute bounded relative motion through NAOqi and verify it with odometry."
+implements: hri_capability_interfaces/MoveRelative
+runner: hri_naoqi_providers::NaoqiMoveRelativeRunner

@@ -5,11 +5,17 @@ find_package(ament_cmake REQUIRED)
 find_package(capabilities2_runner REQUIRED)
 find_package(hri_capability_interfaces REQUIRED)
 find_package(naoqi_utilities_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tinyxml2 REQUIRED)
 
-add_library(nao_speak_runner SHARED src/nao_speak_runner.cpp)
+add_library(
+  nao_speak_runner SHARED
+  src/nao_speak_runner.cpp
+  src/naoqi_move_relative_runner.cpp
+)
 target_compile_features(nao_speak_runner PUBLIC cxx_std_17)
 target_compile_options(nao_speak_runner PRIVATE -Wall -Wextra -Wpedantic)
 ament_target_dependencies(
@@ -17,8 +23,10 @@ ament_target_dependencies(
   capabilities2_runner
   hri_capability_interfaces
   naoqi_utilities_msgs
+  nav_msgs
   pluginlib
   rclcpp
+  std_srvs
 )
 target_link_libraries(nao_speak_runner tinyxml2::tinyxml2)
 

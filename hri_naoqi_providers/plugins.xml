@@ -7,4 +7,12 @@
       Exposes the portable Speak service and delegates speech to NAO's /nao/say service.
     </description>
   </class>
+  <class
+    name="hri_naoqi_providers::NaoqiMoveRelativeRunner"
+    type="hri_naoqi_providers::NaoqiMoveRelativeRunner"
+    base_class_type="capabilities2_runner::RunnerBase">
+    <description>
+      Exposes safe relative planar motion through compatible NAOqi ROS 2 services.
+    </description>
+  </class>
 </library>

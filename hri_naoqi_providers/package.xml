@@ -11,12 +11,15 @@
   <depend>capabilities2_runner</depend>
   <depend>hri_capability_interfaces</depend>
   <depend>naoqi_utilities_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
+  <depend>std_srvs</depend>
   <depend>tinyxml2</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
+    <capability_provider>capability_providers/NaoqiMoveRelative.yaml</capability_provider>
     <capability_provider>capability_providers/NaoSpeak.yaml</capability_provider>
   </export>
 </package>

@@ -18,14 +18,41 @@ A backend request that does not complete within five seconds returns `nao_say_ti
 
 Stopping the runner is idempotent and safe if the backend callback arrives late. A request already accepted by `/nao/say` cannot be cancelled by this provider; stopping only prevents further work and reports `provider_stopped` to an outstanding portable request when the backend completes.
 
+## `NaoqiMoveRelativeRunner`
+
+`hri_naoqi_providers::NaoqiMoveRelativeRunner` exposes
+`/hri/move_relative` and delegates bounded ground-plane motion to
+`/nao/move_to`. The three internal NAO names can be remapped to equivalent
+Pepper interfaces without changing the portable service:
+
+- `/nao/move_to` for the blocking NAOqi motion request;
+- `/nao/set_autonomous_state` to force autonomous life off first;
+- `/nao/odom` to verify the achieved displacement.
+
+The provider accepts one request at a time and initially limits targets to
+`±0.5 m` in X, `±0.3 m` in Y and `±π/2 rad`. It rejects zero, non-finite and
+out-of-range requests before calling the robot. A recent odometry sample is
+required before motion. After the backend returns, the provider transforms the
+odom delta into the robot's initial frame and checks a `0.05 m` position and
+`0.15 rad` angular tolerance.
+
+The underlying `MoveTo` response is empty, so a response from that service is
+not considered proof of success. If the 30-second deadline expires, the
+portable request fails and the provider enters an uncertain state that rejects
+new movement until Capabilities2 releases and restarts it. This timeout does
+not cancel motion: the current SinfonIA navigation package does not expose
+`ALMotion.stopMove`, so physical use remains pending a cancellation path.
+
 ## Dependencies
 
 - ROS 2 Jazzy
 - Capabilities2 (`capabilities2_runner`)
 - `hri_capability_interfaces`
 - SinfonIA's `naoqi_utilities_msgs`
+- `nav_msgs` and `std_srvs`
 
-The NAO driver must already expose `/nao/say`. This package does not start or configure the robot driver.
+The NAOqi bridge must already expose the required robot services and odometry.
+This package does not start or configure the robot driver.
 
 ## Build
 

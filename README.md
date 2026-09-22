@@ -10,6 +10,12 @@ específicos de robots o backends sin introducir esos detalles en la aplicación
 Capabilities2. Expone `/hri/speak` y delega de forma no animada y síncrona al
 servicio SinfonIA `/nao/say`.
 
+El mismo paquete contiene `NaoqiMoveRelative`, que expone
+`/hri/move_relative`, desactiva la vida autónoma, serializa solicitudes,
+aplica límites y verifica el resultado de `/nao/move_to` mediante odometría.
+Los nombres internos pueden remapearse a Pepper porque el contrato de la
+aplicación permanece igual.
+
 Consulta [hri_naoqi_providers/README.md](hri_naoqi_providers/README.md) para
 dependencias, compilación y limitaciones.
 
