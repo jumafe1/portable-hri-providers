@@ -1,5 +1,6 @@
 #include <capabilities2_runner/runner_base.hpp>
 #include <hri_capability_interfaces/msg/person_detection2_d.hpp>
+#include <hri_capability_interfaces/msg/person_detection2_d_array.hpp>
 #include <hri_capability_interfaces/srv/detect_people.hpp>
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -13,15 +14,20 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace hri_yolo_providers
 {
 namespace
 {
 using PortableDetection = hri_capability_interfaces::msg::PersonDetection2D;
+using PortablePeople = hri_capability_interfaces::msg::PersonDetection2DArray;
 using PortableDetectPeople = hri_capability_interfaces::srv::DetectPeople;
 using YoloDetections = yolo_msgs::msg::DetectionArray;
 
+constexpr char kPortablePeopleTopicType[] =
+  "hri_capability_interfaces/msg/PersonDetection2DArray";
+constexpr char kDefaultPortablePeopleTopic[] = "/hri/people";
 constexpr char kPortableServiceType[] = "hri_capability_interfaces/srv/DetectPeople";
 constexpr char kDefaultPortableService[] = "/hri/detect_people";
 constexpr char kYoloDetectionsTopic[] = "/yolo/detections";
@@ -47,6 +53,33 @@ void fail_response(
   response.provider = provider;
   response.message = message;
 }
+
+bool append_person_detection(
+  const yolo_msgs::msg::Detection & detection,
+  const double minimum_confidence,
+  std::vector<PortableDetection> & people)
+{
+  if (detection.class_name != "person" || !std::isfinite(detection.score) ||
+    detection.score < minimum_confidence ||
+    !std::isfinite(detection.bbox.center.position.x) ||
+    !std::isfinite(detection.bbox.center.position.y) ||
+    !std::isfinite(detection.bbox.size.x) ||
+    !std::isfinite(detection.bbox.size.y) ||
+    detection.bbox.size.x < 0.0 || detection.bbox.size.y < 0.0)
+  {
+    return false;
+  }
+
+  PortableDetection person;
+  person.confidence = detection.score;
+  person.tracking_id = detection.id;
+  person.center_x = detection.bbox.center.position.x;
+  person.center_y = detection.bbox.center.position.y;
+  person.width = detection.bbox.size.x;
+  person.height = detection.bbox.size.y;
+  people.push_back(std::move(person));
+  return true;
+}
 }  // namespace
 
 class YoloDetectPeopleRunner : public capabilities2_runner::RunnerBase
@@ -61,6 +94,16 @@ public:
   {
     init_base(node, config, started, terminated, stopped);
 
+    std::string people_topic_name{kDefaultPortablePeopleTopic};
+    try {
+      people_topic_name = get_topic_name_by_type(kPortablePeopleTopicType);
+    } catch (const capabilities2_runner::runner_exception &) {
+      RCLCPP_WARN(
+        node->get_logger(),
+        "No DetectPeople topic resource was configured; using %s",
+        kDefaultPortablePeopleTopic);
+    }
+
     std::string service_name{kDefaultPortableService};
     try {
       service_name = get_service_name_by_type(kPortableServiceType);
@@ -74,7 +117,11 @@ public:
     auto state = std::make_shared<ProviderState>();
     state->provider = config.provider;
 
-    auto detection_callback = [state](const YoloDetections::SharedPtr message) {
+    people_publisher_ = node->create_publisher<PortablePeople>(
+      people_topic_name, rclcpp::QoS(10));
+
+    auto detection_callback = [state, people_publisher = people_publisher_](
+      const YoloDetections::SharedPtr message) {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (!state->running) {
           return;
@@ -82,6 +129,15 @@ public:
         state->latest_frame = *message;
         state->received_at = std::chrono::steady_clock::now();
         state->has_frame = true;
+
+        PortablePeople people_frame;
+        people_frame.header = message->header;
+        people_frame.provider = state->provider;
+        for (const auto & detection : message->detections) {
+          append_person_detection(
+            detection, kDefaultMinimumConfidence, people_frame.people);
+        }
+        people_publisher->publish(std::move(people_frame));
       };
 
     auto service_callback =
@@ -131,25 +187,7 @@ public:
         }
 
         for (const auto & detection : frame.detections) {
-          if (detection.class_name != "person" || !std::isfinite(detection.score) ||
-            detection.score < minimum_confidence ||
-            !std::isfinite(detection.bbox.center.position.x) ||
-            !std::isfinite(detection.bbox.center.position.y) ||
-            !std::isfinite(detection.bbox.size.x) ||
-            !std::isfinite(detection.bbox.size.y) ||
-            detection.bbox.size.x < 0.0 || detection.bbox.size.y < 0.0)
-          {
-            continue;
-          }
-
-          PortableDetection person;
-          person.confidence = detection.score;
-          person.tracking_id = detection.id;
-          person.center_x = detection.bbox.center.position.x;
-          person.center_y = detection.bbox.center.position.y;
-          person.width = detection.bbox.size.x;
-          person.height = detection.bbox.size.y;
-          response->people.push_back(std::move(person));
+          append_person_detection(detection, minimum_confidence, response->people);
         }
 
         response->success = true;
@@ -186,6 +224,7 @@ public:
 
     service_.reset();
     detection_subscription_.reset();
+    people_publisher_.reset();
     state_.reset();
 
     if (on_stopped_) {
@@ -203,6 +242,7 @@ private:
   std::shared_ptr<ProviderState> state_;
   rclcpp::Subscription<YoloDetections>::SharedPtr detection_subscription_;
   rclcpp::Service<PortableDetectPeople>::SharedPtr service_;
+  rclcpp::Publisher<PortablePeople>::SharedPtr people_publisher_;
 };
 }  // namespace hri_yolo_providers
 
