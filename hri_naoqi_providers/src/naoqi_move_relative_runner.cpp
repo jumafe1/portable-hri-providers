@@ -1,3 +1,5 @@
+#include "motion_lease.hpp"
+
 #include <capabilities2_runner/runner_base.hpp>
 #include <hri_capability_interfaces/srv/move_relative.hpp>
 #include <naoqi_utilities_msgs/srv/move_to.hpp>
@@ -70,6 +72,7 @@ struct ProviderState
   Pose2D latest_pose;
   std::chrono::steady_clock::time_point odometry_received_at;
   rclcpp::Client<NaoqiMove>::SharedPtr move_backend;
+  std::shared_ptr<MotionLease> motion_lease;
 };
 
 double normalize_angle(const double angle)
@@ -133,6 +136,11 @@ std::optional<PendingRequest> take_pending(
   }
   if (fault_provider) {
     state->faulted = true;
+    state->motion_lease->latch_until_process_exit();
+    RCLCPP_ERROR(
+      rclcpp::get_logger("hri_naoqi_providers.move_relative"),
+      "Motion state uncertain; robot motion lease remains locked until server exit. "
+      "Verify physical stop before restarting the server.");
   }
   auto pending = std::move(state->pending);
   state->pending.reset();
@@ -195,7 +203,8 @@ void verify_motion(
   }
 
   if (!odometry_is_fresh) {
-    finish_request(state, request_id, false, "odometry_unavailable_after_motion");
+    finish_request(
+      state, request_id, false, "odometry_unavailable_after_motion", Pose2D{}, true);
     return;
   }
 
@@ -209,13 +218,22 @@ void verify_motion(
   finish_request(
     state, request_id, reached,
     reached ? "motion_completed" : "motion_target_not_reached",
-    achieved);
+    achieved, !reached);
 }
 }  // namespace
 
 class NaoqiMoveRelativeRunner : public capabilities2_runner::RunnerBase
 {
 public:
+  ~NaoqiMoveRelativeRunner()
+  {
+    try {
+      stop();
+    } catch (const std::exception &) {
+      // ROS teardown may prevent reporting a final stopped event.
+    }
+  }
+
   void start(
     rclcpp::Node::SharedPtr node,
     const capabilities2_runner::runner_opts & config,
@@ -238,6 +256,12 @@ public:
     auto state = std::make_shared<ProviderState>();
     state->provider = config.provider;
     state->move_backend = node->create_client<NaoqiMove>(kNaoqiMoveService);
+    // Existing Pepper launch files remap move_to but not necessarily cmd_vel.
+    // Both adapters in this package use the robot namespace for the lease key.
+    const std::string resolved_move = state->move_backend->get_service_name();
+    const auto separator = resolved_move.find_last_of('/');
+    const std::string velocity_topic = resolved_move.substr(0, separator + 1) + "cmd_vel";
+    state->motion_lease = std::make_shared<MotionLease>(velocity_topic);
 
     auto odometry_callback = [state](const Odometry::SharedPtr message) {
         std::lock_guard<std::mutex> lock(state->mutex);
@@ -395,6 +419,13 @@ public:
         return;
       }
       state->running = false;
+      if (state->pending) {
+        state->motion_lease->latch_until_process_exit();
+        RCLCPP_ERROR(
+          rclcpp::get_logger("hri_naoqi_providers.move_relative"),
+          "Released during a pending motion: physical cancellation is unavailable. "
+          "Motion lease remains locked until server exit; verify physical stop first.");
+      }
       pending = std::move(state->pending);
       state->pending.reset();
     }

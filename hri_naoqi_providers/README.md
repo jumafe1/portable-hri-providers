@@ -41,9 +41,49 @@ remains under the control of the robot launch procedure or the operator.
 The underlying `MoveTo` response is empty, so a response from that service is
 not considered proof of success. If the 30-second deadline expires, the
 portable request fails and the provider enters an uncertain state that rejects
-new movement until Capabilities2 releases and restarts it. This timeout does
-not cancel motion: the current SinfonIA navigation package does not expose
-`ALMotion.stopMove`, so physical use remains pending a cancellation path.
+new movement. The local motion lease remains locked until the server process
+exits; releasing and reacquiring the capability is not sufficient. Failed
+verification and release while motion is pending latch that same lock. Verify
+physical stop before restarting. This timeout does not cancel motion: the
+current SinfonIA navigation package does not expose `ALMotion.stopMove`.
+
+## `NaoqiMoveVelocityRunner`
+
+Accepts the portable `MoveVelocity` input `/hri/cmd_vel` (`geometry_msgs/Twist`)
+and publishes to `/nao/cmd_vel`, remappable to `/pepper/cmd_vel`. Only body-frame
+`linear.x`, `linear.y` (m/s) and `angular.z` (rad/s) are supported; limits are
+0.10, 0.05 and 0.20 in absolute value. Non-finite, unsupported-axis and excessive
+commands cause an immediate zero request, not silent clipping.
+
+Output/status run at 20 Hz. A monotonic 300 ms input watchdog requests zero.
+Nonzero commands ramp by at most 0.10 m/s² (X/Y) and 0.40 rad/s² (yaw); stops
+bypass ramping. Backend disappearance clears the target; reconnection does not
+replay it. QoS is reliable/volatile/keep-last 1. Only one command producer should
+be active. There is no obstacle detection or automatic autonomous-life change.
+
+`/hri/move_velocity/status` is a periodic `std_msgs/String`: `ready`, `moving`,
+`stopped`, `command_timeout`, `invalid_command`, `backend_unavailable`. These
+describe command-side state, **not measured robot motion or physical stop**.
+
+Both motion providers acquire an advisory file lock for the resolved robot
+`cmd_vel` namespace when activated. This prevents concurrent cooperating
+providers for the same robot on the same host and Unix user. It does not
+arbitrate other computers, isolated containers, external teleop or direct
+driver calls. Relative motion derives this namespace from its resolved
+`move_to` service; use consistent per-robot namespaces/remappings.
+
+Known upstream limitation: Capabilities2 caches the runner before calling
+`start()`. If the lease refuses activation, the failed runner can still appear
+in `get_running_capabilities`, although its command interfaces were not created.
+Check actual interfaces/status and explicitly free the failed entry before retry.
+The exclusion test verifies absence of conflicting command interfaces, not merely
+the inaccurate running catalog. No upstream code is patched here.
+
+On release the velocity provider publishes zero before destroying its endpoints.
+This is best effort: process death, middleware failure or network loss can
+prevent delivery. The local driver callback has no independent watchdog. A
+robot-side/downstream safety mechanism is required before autonomous operation;
+initial physical trials must remain short and directly supervised.
 
 ## Dependencies
 
@@ -52,6 +92,7 @@ not cancel motion: the current SinfonIA navigation package does not expose
 - `hri_capability_interfaces`
 - SinfonIA's `naoqi_utilities_msgs`
 - `nav_msgs`
+- `geometry_msgs` and `std_msgs`
 
 The NAOqi bridge must already expose the required robot services and odometry.
 This package does not start or configure the robot driver.

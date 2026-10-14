@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: NaoqiMoveVelocity
+spec_version: 1.1
+spec_type: provider
+description: "Bounded planar velocity with command watchdog; requires a supervised robot-side stop."
+implements: hri_capability_interfaces/MoveVelocity
+runner: hri_naoqi_providers::NaoqiMoveVelocityRunner

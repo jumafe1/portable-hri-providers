@@ -15,4 +15,12 @@
       Exposes safe relative planar motion through compatible NAOqi ROS 2 services.
     </description>
   </class>
+  <class
+    name="hri_naoqi_providers::NaoqiMoveVelocityRunner"
+    type="hri_naoqi_providers::NaoqiMoveVelocityRunner"
+    base_class_type="capabilities2_runner::RunnerBase">
+    <description>
+      Bounded planar velocity, freshness watchdog and local motion exclusion.
+    </description>
+  </class>
 </library>
