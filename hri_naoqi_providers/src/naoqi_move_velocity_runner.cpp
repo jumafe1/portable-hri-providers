@@ -7,8 +7,10 @@
 #include <std_msgs/msg/string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -23,6 +25,7 @@ using Twist = geometry_msgs::msg::Twist;
 using Clock = std::chrono::steady_clock;
 constexpr auto kPeriod = std::chrono::milliseconds(50);
 constexpr auto kCommandMaximumAge = std::chrono::milliseconds(300);
+constexpr auto kGraphSettleTime = std::chrono::milliseconds(500);
 
 bool valid_command(const Twist & command)
 {
@@ -45,6 +48,13 @@ struct VelocityState
   bool running{true};
   bool backend_ready{false};
   bool has_command{false};
+  bool graph_ready{false};
+  bool source_pinned{false};
+  std::optional<Clock::time_point> graph_stable_since;
+  std::array<uint8_t, RMW_GID_STORAGE_SIZE> source_gid{};
+  std::string fault;
+  std::string input_topic;
+  std::weak_ptr<rclcpp::Node> node;
   Twist target;
   Twist output;
   Clock::time_point received_at;
@@ -73,6 +83,57 @@ void halt(const std::shared_ptr<VelocityState> & state, const std::string & reas
   publish_status(state);
 }
 
+// Caller holds the mutex. Graph discovery is asynchronous: this bounds the
+// startup settling period, not a distributed lock or robot-side stop guarantee.
+bool check_exclusivity(const std::shared_ptr<VelocityState> & state)
+{
+  if (!state->fault.empty()) {
+    halt(state, state->fault);
+    return false;
+  }
+  const auto node = state->node.lock();
+  if (!node) {
+    halt(state, "backend_unavailable");
+    return false;
+  }
+  const auto inputs = node->get_publishers_info_by_topic(state->input_topic);
+  const auto outputs = node->get_publishers_info_by_topic(state->backend->get_topic_name());
+  if (inputs.size() > 1 || outputs.size() > 1) {
+    state->fault = "multiple_velocity_publishers";
+    halt(state, state->fault);
+    return false;
+  }
+  if (inputs.size() != 1 || outputs.size() != 1) {
+    state->graph_ready = false;
+    state->graph_stable_since.reset();
+    halt(state, "awaiting_velocity_source");
+    return false;
+  }
+  const auto & gid = inputs.front().endpoint_gid();
+  if (state->source_pinned && state->source_gid != gid) {
+    state->fault = "velocity_source_changed";
+    halt(state, state->fault);
+    return false;
+  }
+  if (!state->source_pinned) {
+    state->source_gid = gid;
+    state->source_pinned = true;
+  }
+  const auto now = Clock::now();
+  if (!state->graph_stable_since) {
+    state->graph_stable_since = now;
+  }
+  if (now - *state->graph_stable_since < kGraphSettleTime) {
+    halt(state, "graph_settling");
+    return false;
+  }
+  if (!state->graph_ready) {
+    state->graph_ready = true;
+    halt(state, "ready");
+  }
+  return true;
+}
+
 void tick(const std::shared_ptr<VelocityState> & state)
 {
   std::lock_guard<std::mutex> lock(state->mutex);
@@ -84,6 +145,9 @@ void tick(const std::shared_ptr<VelocityState> & state)
   const double dt = std::clamp(
     std::chrono::duration<double>(now - state->last_tick).count(), 0.0, 0.05);
   state->last_tick = now;
+  if (!check_exclusivity(state)) {
+    return;
+  }
   if (state->backend->get_subscription_count() == 0) {
     state->backend_ready = false;
     halt(state, "backend_unavailable");
@@ -144,6 +208,8 @@ public:
     const auto input_topic = resource_topic("geometry_msgs/msg/Twist", "/hri/cmd_vel");
     const auto status_topic = resource_topic("std_msgs/msg/String", "/hri/move_velocity/status");
     auto state = std::make_shared<VelocityState>();
+    state->node = node;
+    state->input_topic = node->get_node_topics_interface()->resolve_topic_name(input_topic, false);
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile();
     state->backend = node->create_publisher<Twist>("/nao/cmd_vel", qos);
     if (node->get_node_topics_interface()->resolve_topic_name(input_topic, false) ==
@@ -157,9 +223,19 @@ public:
     halt(state, "backend_unavailable");
     subscription_ = node->create_subscription<Twist>(
       input_topic, qos,
-      [state](const Twist::SharedPtr command) {
+      [state](const Twist::SharedPtr command, const rclcpp::MessageInfo & info) {
         std::lock_guard<std::mutex> lock(state->mutex);
         if (!state->running) {
+          return;
+        }
+        if (!check_exclusivity(state)) {
+          return;
+        }
+        if (std::memcmp(info.get_rmw_message_info().publisher_gid.data,
+            state->source_gid.data(), RMW_GID_STORAGE_SIZE) != 0)
+        {
+          state->fault = "velocity_source_changed";
+          halt(state, state->fault);
           return;
         }
         if (!valid_command(*command)) {
