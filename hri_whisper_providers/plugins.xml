@@ -1,0 +1,5 @@
+<library path="whisper_transcribe_speech_runner">
+  <class name="hri_whisper_providers::WhisperTranscribeSpeechRunner" type="hri_whisper_providers::WhisperTranscribeSpeechRunner" base_class_type="capabilities2_runner::RunnerBase">
+    <description>Lease-gated local Whisper transcription proxy.</description>
+  </class>
+</library>

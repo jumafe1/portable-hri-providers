@@ -9,7 +9,9 @@ find_package(naoqi_utilities_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
 find_package(tinyxml2 REQUIRED)
 
 add_library(
@@ -17,6 +19,7 @@ add_library(
   src/nao_speak_runner.cpp
   src/naoqi_move_relative_runner.cpp
   src/naoqi_move_velocity_runner.cpp
+  src/naoqi_orient_camera_runner.cpp
 )
 target_compile_features(nao_speak_runner PUBLIC cxx_std_17)
 target_compile_options(nao_speak_runner PRIVATE -Wall -Wextra -Wpedantic)
@@ -29,7 +32,9 @@ ament_target_dependencies(
   nav_msgs
   pluginlib
   rclcpp
+  sensor_msgs
   std_msgs
+  trajectory_msgs
 )
 target_link_libraries(nao_speak_runner tinyxml2::tinyxml2)
 
@@ -50,6 +55,16 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_motion_lease capabilities2_runner rclcpp)
   target_link_libraries(test_motion_lease tinyxml2::tinyxml2)
   add_test(NAME motion_lease COMMAND test_motion_lease)
+  add_executable(test_orient_camera test/test_orient_camera.cpp)
+  target_include_directories(test_orient_camera PRIVATE src)
+  target_compile_features(test_orient_camera PRIVATE cxx_std_17)
+  target_compile_options(test_orient_camera PRIVATE -Wall -Wextra -Wpedantic)
+  ament_target_dependencies(test_orient_camera capabilities2_runner hri_capability_interfaces
+    pluginlib rclcpp sensor_msgs trajectory_msgs)
+  target_link_libraries(test_orient_camera tinyxml2::tinyxml2)
+  add_test(NAME orient_camera COMMAND test_orient_camera)
+  set_tests_properties(orient_camera PROPERTIES
+    ENVIRONMENT "ROS_DOMAIN_ID=195;ROS_LOCALHOST_ONLY=1" TIMEOUT 60)
 endif()
 
 ament_package()

@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: NaoqiOrientCamera
+spec_version: 1.1
+spec_type: provider
+description: "Optional bounded pitch-only camera orientation with measured feedback. No yaw, stiffness or autonomous-life changes; no physical stop guarantee."
+implements: hri_capability_interfaces/OrientCamera
+runner: hri_naoqi_providers::NaoqiOrientCameraRunner

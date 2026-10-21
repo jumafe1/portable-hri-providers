@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: WhisperTranscribeSpeech
+spec_version: 1.1
+spec_type: provider
+description: "Opt-in bounded in-memory speech capture and local Whisper transcription. Requires configured worker."
+implements: hri_capability_interfaces/TranscribeSpeech
+runner: hri_whisper_providers::WhisperTranscribeSpeechRunner

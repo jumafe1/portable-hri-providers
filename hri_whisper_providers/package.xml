@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>hri_whisper_providers</name>
+  <version>0.1.0</version>
+  <description>Portable, opt-in local speech transcription using Whisper.</description>
+  <maintainer email="jm.ferreira@uniandes.edu.co">Julian Ferreira</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>capabilities2_runner</depend>
+  <depend>hri_capability_interfaces</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>tinyxml2</depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>audio_common_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+    <capability_provider>capability_providers/WhisperTranscribeSpeech.yaml</capability_provider>
+  </export>
+</package>

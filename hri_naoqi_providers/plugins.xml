@@ -23,4 +23,9 @@
       Bounded planar velocity, freshness watchdog and local motion exclusion.
     </description>
   </class>
+  <class name="hri_naoqi_providers::NaoqiOrientCameraRunner"
+    type="hri_naoqi_providers::NaoqiOrientCameraRunner"
+    base_class_type="capabilities2_runner::RunnerBase">
+    <description>Optional bounded pitch-only camera orientation with measured feedback.</description>
+  </class>
 </library>
