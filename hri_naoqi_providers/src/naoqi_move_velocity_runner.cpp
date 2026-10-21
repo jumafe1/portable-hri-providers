@@ -1,4 +1,5 @@
 #include "motion_lease.hpp"
+#include "velocity_source_guard.hpp"
 
 #include <capabilities2_runner/runner_base.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -7,10 +8,8 @@
 #include <std_msgs/msg/string.hpp>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -49,9 +48,8 @@ struct VelocityState
   bool backend_ready{false};
   bool has_command{false};
   bool graph_ready{false};
-  bool source_pinned{false};
   std::optional<Clock::time_point> graph_stable_since;
-  std::array<uint8_t, RMW_GID_STORAGE_SIZE> source_gid{};
+  VelocitySourceGuard source;
   std::string fault;
   std::string input_topic;
   std::weak_ptr<rclcpp::Node> node;
@@ -109,15 +107,12 @@ bool check_exclusivity(const std::shared_ptr<VelocityState> & state)
     halt(state, "awaiting_velocity_source");
     return false;
   }
-  const auto & gid = inputs.front().endpoint_gid();
-  if (state->source_pinned && state->source_gid != gid) {
-    state->fault = "velocity_source_changed";
+  const auto identity = state->source.observe_graph(inputs.front().endpoint_gid());
+  if (identity != VelocitySourceGuard::Result::accepted) {
+    state->fault = identity == VelocitySourceGuard::Result::invalid ?
+      "invalid_velocity_source" : "velocity_source_changed";
     halt(state, state->fault);
     return false;
-  }
-  if (!state->source_pinned) {
-    state->source_gid = gid;
-    state->source_pinned = true;
   }
   const auto now = Clock::now();
   if (!state->graph_stable_since) {
@@ -231,19 +226,35 @@ public:
         if (!check_exclusivity(state)) {
           return;
         }
-        if (std::memcmp(info.get_rmw_message_info().publisher_gid.data,
-            state->source_gid.data(), RMW_GID_STORAGE_SIZE) != 0)
+        const bool command_valid = valid_command(*command);
+        const bool backend_available = state->backend_ready &&
+          state->backend->get_subscription_count() > 0;
+        // Never compare graph GUID bytes with opaque delivery identity bytes.
+        // Check a pinned sender even for malformed commands or a missing backend;
+        // neither condition may hide a changed source or learn an initial sender.
+        const auto identity = state->source.observe_sample(
+          info.get_rmw_message_info().publisher_gid,
+          command_valid && backend_available && is_zero(*command), Clock::now());
+        if (identity == VelocitySourceGuard::Result::invalid ||
+          identity == VelocitySourceGuard::Result::changed)
         {
-          state->fault = "velocity_source_changed";
+          state->fault = identity == VelocitySourceGuard::Result::invalid ?
+            "invalid_velocity_source" : "velocity_source_changed";
           halt(state, state->fault);
           return;
         }
-        if (!valid_command(*command)) {
+        if (!command_valid) {
           halt(state, "invalid_command");
           return;
         }
-        if (!state->backend_ready || state->backend->get_subscription_count() == 0) {
+        if (!backend_available) {
           halt(state, "backend_unavailable");
+          return;
+        }
+        if (identity == VelocitySourceGuard::Result::awaiting_zero ||
+          identity == VelocitySourceGuard::Result::settling)
+        {
+          halt(state, identity == VelocitySourceGuard::Result::awaiting_zero ? "ready" : "stopped");
           return;
         }
         state->received_at = Clock::now();

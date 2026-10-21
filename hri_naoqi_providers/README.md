@@ -65,6 +65,41 @@ be active. There is no obstacle detection or automatic autonomous-life change.
 `stopped`, `command_timeout`, `invalid_command`, `backend_unavailable`. These
 describe command-side state, **not measured robot motion or physical stop**.
 
+### Command-source continuity and startup
+
+The provider requires one discovered portable command publisher and no other
+publisher on its backend command topic. The graph identity is pinned when first
+observed; discovery must settle for 500 ms before accepting commands. The client
+must then send valid zero commands,
+receive a fresh `stopped` acknowledgement, and keep sending zero for at least
+500 ms before requesting motion. Nonzero commands cannot establish the initial
+delivery identity. Update the application and provider together; the reference
+application performs this handshake automatically before starting its trial.
+
+Graph endpoint IDs and received-message publisher IDs are pinned and checked
+**independently**. They need not have the same byte representation across RMW
+implementations. An empty/unsupported identity faults as `invalid_velocity_source`;
+a changed graph or delivery identity faults as `velocity_source_changed`.
+Competing publishers fault as `multiple_velocity_publishers`. These faults latch
+until the capability is released and reacquired; removing the competitor does
+not silently resume motion. `graph_settling` means discovery has not stabilized.
+
+These are continuity guards, not authentication or an atomic distributed lock:
+ROS graph discovery is asynchronous. A `stopped` acknowledgement only confirms
+that the provider requested zero, not that the robot physically stopped.
+
+Software-only identity diagnostic (no driver; private topic, zero messages only):
+
+```bash
+ROS_DOMAIN_ID=187 ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+  ./build/hri_naoqi_providers/test_velocity_gid
+```
+
+Build with `-DBUILD_TESTING=ON`. Repeat with `rmw_fastrtps_cpp` when installed.
+The diagnostic requires domain 100–200 and localhost isolation, rejects command
+line remapping, and checks identity stability rather than cross-representation
+equality. Passing this diagnostic is not a hardware qualification.
+
 Both motion providers acquire an advisory file lock for the resolved robot
 `cmd_vel` namespace when activated. This prevents concurrent cooperating
 providers for the same robot on the same host and Unix user. It does not
