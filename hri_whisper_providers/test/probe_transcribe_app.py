@@ -87,7 +87,8 @@ def main():
             lines = collections.deque(maxlen=500)
             process = subprocess.Popen([
                 "ros2", "launch", "hri_reference_app", "hri_app.launch.py", "robot:=nao",
-                "mode:=transcribe_speech", "confirm:=ESCUCHAR", "record_duration:=0.5", "timeout:=8.0"],
+                "mode:=transcribe_speech", "confirm:=ESCUCHAR", "record_duration:=0.5", "timeout:=8.0",
+                "start_whisper_worker:=false"],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
 
             def read_output():

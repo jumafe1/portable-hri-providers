@@ -1,5 +1,6 @@
 #include <capabilities2_runner/runner_base.hpp>
 #include <hri_capability_interfaces/msg/speech_transcript.hpp>
+#include <hri_capability_interfaces/msg/speech_capture_status.hpp>
 #include <hri_capability_interfaces/srv/transcribe_speech.hpp>
 #include <pluginlib/class_list_macros.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -20,11 +21,14 @@ namespace
 {
 using Service = hri_capability_interfaces::srv::TranscribeSpeech;
 using Transcript = hri_capability_interfaces::msg::SpeechTranscript;
+using CaptureStatus = hri_capability_interfaces::msg::SpeechCaptureStatus;
 using Clock = std::chrono::steady_clock;
 struct State
 {
   std::mutex mutex;
   bool running{true};
+  bool continuous{false};
+  std::uint64_t last_segment{0};
   std::string owner;
   std::string provider;
   std::string request_id;
@@ -33,6 +37,7 @@ struct State
   Clock::time_point deadline;
   rclcpp::Client<Service>::SharedPtr backend;
   rclcpp::Publisher<Transcript>::SharedPtr output;
+  rclcpp::Publisher<CaptureStatus>::SharedPtr status_output;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr lease;
   rclcpp::Service<Service>::SharedPtr pending_service;
   std::shared_ptr<rmw_request_id_t> pending_header;
@@ -66,6 +71,8 @@ void clear_request(State & state)
   state.request_id.clear();
   state.public_id.clear();
   state.awaiting_backend.reset();
+  state.continuous = false;
+  state.last_segment = 0;
 }
 
 // Called with state mutex held; never waits for discovery or inference on the ROS executor.
@@ -85,16 +92,23 @@ void dispatch_when_ready(const std::shared_ptr<State> & state)
           const auto response = result.get();
           const bool accepted = response->accepted && response->request_id == id;
           reply(*state, accepted, accepted ? "capture_started" : response->message);
-          if (!accepted) {clear_request(*state); return;}
-          state->deadline = Clock::now() + std::chrono::milliseconds(static_cast<int>((duration + 62) * 1000));
+          if (!accepted) {
+            if (state->continuous) {state->owner += "r";}
+            clear_request(*state);
+            return;
+          }
+          state->deadline = Clock::now() + std::chrono::milliseconds(
+            state->continuous ? 2000 : static_cast<int>((duration + 62) * 1000));
         } catch (const std::exception &) {
           reply(*state, false, "worker_admission_failed");
+          if (state->continuous) {state->owner += "r";}
           clear_request(*state);
         }
       });
     state->backend_sequence = future.request_id;
   } catch (const std::exception &) {
     reply(*state, false, "worker_admission_failed");
+    if (state->continuous) {state->owner += "r";}
     clear_request(*state);
   }
 }
@@ -119,11 +133,15 @@ public:
     state->lease = node->create_publisher<std_msgs::msg::String>("/whisper/lease", 1);
     std::string service_name{"/hri/speech/transcribe"};
     std::string topic_name{"/hri/speech/transcript"};
+    std::string status_name{"/hri/speech/capture_status"};
     try {service_name = get_service_name_by_type("hri_capability_interfaces/srv/TranscribeSpeech");}
     catch (const capabilities2_runner::runner_exception &) {}
     try {topic_name = get_topic_name_by_type("hri_capability_interfaces/msg/SpeechTranscript");}
     catch (const capabilities2_runner::runner_exception &) {}
     state->output = node->create_publisher<Transcript>(topic_name, 10);
+    try {status_name = get_topic_name_by_type("hri_capability_interfaces/msg/SpeechCaptureStatus");}
+    catch (const capabilities2_runner::runner_exception &) {}
+    state->status_output = node->create_publisher<CaptureStatus>(status_name, 1);
     service_ = node->create_service<Service>(service_name,
       [state](std::shared_ptr<rclcpp::Service<Service>> service,
         std::shared_ptr<rmw_request_id_t> header, std::shared_ptr<Service::Request> request) {
@@ -145,12 +163,18 @@ public:
           reject("unsupported_language"); return;
         }
         if (request->request_id.size() > 128) {reject("request_id_too_long"); return;}
+        const double silence = request->silence_sec == 0 ? .8 : request->silence_sec;
+        if (request->continuous && request->duration_sec < 1.0) {reject("duration_out_of_range"); return;}
+        if (request->continuous && (!std::isfinite(silence) || silence < .2 || silence > 2.0 ||
+          silence >= request->duration_sec)) {reject("silence_out_of_range"); return;}
         // Public caller identifiers never choose a lease or collide with an earlier owner.
         state->request_id = state->owner + ":" + std::to_string(++state->sequence);
         state->public_id = request->request_id.empty() ? state->request_id : request->request_id;
         request->request_id = state->request_id;
         state->pending_service = service;
         state->pending_header = header;
+        state->continuous = request->continuous;
+        state->last_segment = 0;
         state->deadline = Clock::now() + std::chrono::seconds(2);
         state->awaiting_backend = request;
         dispatch_when_ready(state);
@@ -160,11 +184,33 @@ public:
         std::lock_guard<std::mutex> lock(state->mutex);
         if (!state->running || state->request_id.empty() || result->request_id != state->request_id) {return;}
         // A capture failure may beat service-response delivery on a separate DDS channel.
-        if (state->pending_service) {reply(*state, true, "capture_completed");}
+        if (state->continuous && !result->final) {
+          if (result->segment_index == 0 || result->segment_index <= state->last_segment) {return;}
+          state->last_segment = result->segment_index;
+        }
+        if (state->pending_service) {
+          reply(*state, true, "capture_completed");
+          if (state->continuous) {state->deadline = Clock::now() + std::chrono::seconds(2);}
+        }
         result->provider = state->provider;
         result->request_id = state->public_id;
+        if (!state->continuous) {result->final = true;}
         state->output->publish(*result);
-        clear_request(*state);
+        if (!state->continuous || result->final) {
+          if (state->continuous) {state->owner += "r";}
+          clear_request(*state);
+        }
+      });
+    status_subscription_ = node->create_subscription<CaptureStatus>("/whisper/capture_status", 1,
+      [state](CaptureStatus::SharedPtr status) {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        if (!state->running || !state->continuous || state->request_id.empty() ||
+          status->request_id != state->request_id) {return;}
+        if (state->pending_service) {reply(*state, true, "capture_started");}
+        state->deadline = Clock::now() + std::chrono::seconds(2);
+        status->request_id = state->public_id;
+        status->provider = state->provider;
+        state->status_output->publish(*status);
       });
     timer_ = node->create_wall_timer(std::chrono::milliseconds(100), [state]() {
         std::lock_guard<std::mutex> lock(state->mutex);
@@ -180,7 +226,8 @@ public:
             result.request_id = state->public_id;
             result.provider = state->provider;
             result.success = false;
-            result.message = "worker_result_timeout";
+            result.message = state->continuous ? "worker_stream_timeout" : "worker_result_timeout";
+            result.final = true;
             state->output->publish(result);
           }
           clear_request(*state);
@@ -209,6 +256,7 @@ public:
     timer_.reset();
     service_.reset();
     subscription_.reset();
+    status_subscription_.reset();
     state_.reset();
     if (on_stopped_) {on_stopped_(run_config_.interface);}
   }
@@ -220,6 +268,7 @@ private:
   std::shared_ptr<State> state_;
   rclcpp::Service<Service>::SharedPtr service_;
   rclcpp::Subscription<Transcript>::SharedPtr subscription_;
+  rclcpp::Subscription<CaptureStatus>::SharedPtr status_subscription_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 }  // namespace hri_whisper_providers

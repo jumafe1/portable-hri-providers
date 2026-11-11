@@ -1,0 +1,2 @@
+# Voice detector only; the existing local Whisper/Torch installation is reused.
+webrtcvad-wheels==2.0.14

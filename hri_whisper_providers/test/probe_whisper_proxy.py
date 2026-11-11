@@ -8,7 +8,7 @@ import subprocess
 import time
 
 import rclpy
-from hri_capability_interfaces.msg import SpeechTranscript
+from hri_capability_interfaces.msg import SpeechCaptureStatus, SpeechTranscript
 from hri_capability_interfaces.srv import TranscribeSpeech
 from std_msgs.msg import String
 
@@ -48,6 +48,9 @@ def main():
     node = isolated_probe_node("whisper_proxy_probe")
     received, requests, leases = [], [], []
     publisher = node.create_publisher(SpeechTranscript, "/whisper/transcript", 10)
+    status_publisher = node.create_publisher(SpeechCaptureStatus, "/whisper/capture_status", 1)
+    statuses = []
+    node.create_subscription(SpeechCaptureStatus, "/hri/speech/capture_status", statuses.append, 1)
     control = node.create_publisher(String, "/test/whisper/control", 10)
     node.create_subscription(SpeechTranscript, "/hri/speech/transcript", received.append, 10)
     node.create_subscription(String, "/whisper/lease", lambda msg: leases.append(msg.data), 10)
@@ -78,9 +81,10 @@ def main():
         process.wait(timeout=5)
         drain()
 
-    def request(public_id="public-test", duration=.5):
+    def request(public_id="public-test", duration=.5, continuous=False, silence=.8):
         req = TranscribeSpeech.Request()
         req.duration_sec, req.language, req.request_id = duration, "es", public_id
+        req.continuous, req.silence_sec = continuous, silence
         future = client.call_async(req)
         pump(future.done)
         return future.result()
@@ -92,11 +96,12 @@ def main():
         response.message = "capture_started"
         return response
 
-    def emit(private_id, text="synthetic test"):
+    def emit(private_id, text="synthetic test", segment_index=0, final=True):
         result = SpeechTranscript()
         result.header.stamp = node.get_clock().now().to_msg()
         result.request_id, result.text = private_id, text
         result.language, result.success, result.message = "es", True, "transcribed"
+        result.segment_index, result.final = segment_index, final
         publisher.publish(result)
 
     try:
@@ -151,6 +156,34 @@ def main():
         pump(lambda: len(received) == 2)
         assert received[-1].request_id == "new-owner-request"
         checks.append("reacquire_rejects_old_owner")
+        invalid = request("stream", 10.0, True, float("nan"))
+        assert not invalid.accepted and invalid.message == "silence_out_of_range"
+        checks.append("invalid_endpoint_rejected")
+        assert request("stream", 10.0, True).accepted
+        stream_id = requests[-1]
+        status = SpeechCaptureStatus(request_id=stream_id, state="listening")
+        for _ in range(12):
+            status.header.stamp = node.get_clock().now().to_msg()
+            status_publisher.publish(status)
+            drain(.25)
+        assert statuses and statuses[-1].request_id == "stream" and len(received) == 2
+        assert not request("busy").accepted
+        checks.append("silent_stream_lives_with_heartbeat")
+        emit(stream_id, segment_index=1, final=False)
+        emit(stream_id, segment_index=2, final=False)
+        pump(lambda: len(received) == 4)
+        assert [r.segment_index for r in received[-2:]] == [1, 2]
+        assert all(r.request_id == "stream" for r in received[-2:])
+        emit(stream_id, segment_index=1, final=False)
+        drain()
+        assert len(received) == 4
+        checks.append("continuous_results_correlated_and_duplicates_ignored")
+        pump(lambda: len(received) == 5, seconds=4)
+        assert received[-1].message == "worker_stream_timeout" and received[-1].final
+        emit(stream_id, segment_index=3, final=False)
+        drain()
+        assert len(received) == 5
+        checks.append("stream_watchdog_invalidates_late_results")
         print(json.dumps({"passed": len(checks), "checks": checks, "real_audio": False, "real_whisper": False}))
     finally:
         if process is not None and process.poll() is None:
