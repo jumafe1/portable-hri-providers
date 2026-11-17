@@ -1,0 +1,8 @@
+%YAML 1.1
+---
+name: VoskTranscribeSpeech
+spec_version: 1.1
+spec_type: provider
+description: "Lease-gated offline streaming Spanish recognition with a restricted grammar."
+implements: hri_capability_interfaces/TranscribeSpeech
+runner: hri_vosk_providers::VoskTranscribeSpeechRunner

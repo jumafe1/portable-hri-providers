@@ -1,0 +1,5 @@
+<library path="vosk_transcribe_speech_runner">
+  <class name="hri_vosk_providers::VoskTranscribeSpeechRunner" type="hri_vosk_providers::VoskTranscribeSpeechRunner" base_class_type="capabilities2_runner::RunnerBase">
+    <description>Lease-gated local Vosk transcription proxy.</description>
+  </class>
+</library>
